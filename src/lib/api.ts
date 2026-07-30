@@ -10,6 +10,11 @@ export function getAuthHeaders() {
   };
 }
 
+export function isVisitor(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  return localStorage.getItem('ink-cms-visitor') === 'true';
+}
+
 export interface Post {
   id: string;
   title: string;
@@ -32,6 +37,7 @@ export interface Post {
 }
 
 export async function fetchPosts(): Promise<Post[]> {
+  // Visitors have a real session token — API returns only published posts for visitor role
   const res = await fetch(`${API_BASE}/admin/posts`, { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to fetch posts');
   const data = await res.json();

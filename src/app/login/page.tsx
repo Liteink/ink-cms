@@ -46,26 +46,35 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4" style={{ background: 'var(--bg)' }}>
-      <div className="w-full max-w-[340px]">
+      <div className="w-full max-w-[380px]">
         {/* Logo */}
-        <Link href="/" className="mb-8 flex items-center justify-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-[6px]" style={{ background: 'var(--ink)', color: 'var(--bg)' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z" /></svg>
+        <Link href="/" className="mb-10 flex items-center justify-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-[8px]" style={{ background: 'linear-gradient(135deg, #FF7A30, #FF4D00)' }}>
+            <svg width="18" height="18" viewBox="0 0 120 120" fill="none">
+              <path fillRule="evenodd" clipRule="evenodd" d="M60 12 C60 12, 92 48, 92 70 C92 88, 78 100, 60 100 C42 100, 28 88, 28 70 C28 48, 60 12, 60 12 Z M58 30 L46 62 L56 62 L50 84 L66 50 L56 50 Z" fill="white"/>
+            </svg>
           </span>
-          <span className="text-[18px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>Ink CMS</span>
+          <span className="text-[19px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>Ink CMS</span>
         </Link>
 
-        <div className="card-glass p-6">
+        <div className="card-premium p-7">
+          <h1 className="mb-1 text-[20px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
+            {mode === 'login' ? 'Welcome back' : 'Create account'}
+          </h1>
+          <p className="mb-6 text-[13px]" style={{ color: 'var(--muted)' }}>
+            {mode === 'login' ? 'Sign in to your dashboard' : 'First account becomes admin'}
+          </p>
+
           {/* Mode tabs */}
-          <div className="mb-5 flex gap-1 rounded-[999px] p-0.5" style={{ background: 'var(--surface-2)' }}>
+          <div className="mb-6 flex gap-1 rounded-[999px] p-1" style={{ background: 'var(--surface-2)' }}>
             {(['login', 'register'] as const).map(m => (
               <button
                 key={m}
                 onClick={() => { setMode(m); setError(''); }}
-                className="btn-pill flex-1"
+                className="btn-pill flex-1 justify-center"
                 style={
                   mode === m
-                    ? { background: 'var(--ink)', color: 'var(--bg)', borderColor: 'var(--ink)' }
+                    ? { background: 'var(--surface)', color: 'var(--ink)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }
                     : { background: 'transparent', color: 'var(--muted)', borderColor: 'transparent' }
                 }
               >
@@ -74,33 +83,50 @@ export default function LoginPage() {
             ))}
           </div>
 
-          <form onSubmit={submit} className="flex flex-col gap-3">
+          <form onSubmit={submit} className="flex flex-col gap-4">
             {mode === 'register' && (
               <div>
-                <label className="mb-1.5 block text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Name</label>
+                <label className="mb-2 block text-[12px] font-medium" style={{ color: 'var(--muted)' }}>Name</label>
                 <input className="input-line" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} />
               </div>
             )}
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Email</label>
+              <label className="mb-2 block text-[12px] font-medium" style={{ color: 'var(--muted)' }}>Email</label>
               <input type="email" className="input-line" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required />
             </div>
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium" style={{ color: 'var(--muted)' }}>Password</label>
-              <input type="password" className="input-line" placeholder="••••••" value={password} onChange={e => setPassword(e.target.value)} required />
+              <label className="mb-2 block text-[12px] font-medium" style={{ color: 'var(--muted)' }}>Password</label>
+              <input type="password" className="input-line" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} required />
             </div>
 
-            {error && <div className="rounded-[4px] px-3 py-2 text-[12px]" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>{error}</div>}
+            {error && <div className="rounded-[8px] px-3 py-2.5 text-[12px]" style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444' }}>{error}</div>}
 
-            <button type="submit" disabled={loading} className="btn-pill btn-solid mt-2 justify-center">
-              {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+            <button type="submit" disabled={loading} className="btn-pill btn-brand mt-3 justify-center" style={{ padding: '10px 16px', fontSize: '13px' }}>
+              {loading ? <span className="spinner" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> : mode === 'login' ? 'Sign In →' : 'Create Account →'}
             </button>
           </form>
+        </div>
 
-          <div className="mt-4 border-t pt-3 text-center" style={{ borderColor: 'var(--border)' }}>
-            <p className="text-[10px]" style={{ color: 'var(--faint)' }}>
-              The first registered account becomes admin.
-            </p>
+        <div className="mt-6 text-center text-[11px]" style={{ color: 'var(--faint)' }}>
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch('/api/auth/visitor', { method: 'POST' });
+                const data = await res.json();
+                if (data.token) {
+                  localStorage.setItem('ink-cms-token', data.token);
+                  localStorage.setItem('ink-cms-visitor', 'true');
+                  router.push('/admin');
+                }
+              } catch { /* ignore */ }
+            }}
+            className="hover:opacity-70 transition-opacity"
+            style={{ color: 'var(--muted)' }}
+          >
+            Just looking? Explore the demo →
+          </button>
+          <div className="mt-3">
+            Open source · <a href="https://github.com/Liteink/ink-cms" target="_blank" rel="noopener" className="hover:opacity-70">GitHub</a> · <a href="https://liteink.co" className="hover:opacity-70">LiteInk</a>
           </div>
         </div>
       </div>

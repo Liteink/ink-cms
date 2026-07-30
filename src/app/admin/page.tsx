@@ -48,7 +48,7 @@ export default function DashboardPage() {
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ color: 'var(--muted)' }}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
               </div>
               <p className="text-[13px]" style={{ color: 'var(--body)' }}>No posts yet</p>
-              <Link href="/admin/posts/new" className="btn-pill btn-solid">Create your first post</Link>
+              <Link href="/admin/posts/new" className="btn-pill btn-brand">Create your first post</Link>
             </div>
           ) : (
             posts.slice(0, 8).map(post => (
@@ -128,10 +128,11 @@ function actionColor(action: string): string {
 
 function StatCard({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
   return (
-    <div className="card-glass p-4">
+    <div className="card-glass p-4" style={{ position: 'relative', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '60%', background: accent ? `linear-gradient(135deg, ${accent}08, transparent)` : undefined, pointerEvents: 'none' }} />
       <div className="mb-2 text-[11px] font-medium" style={{ color: 'var(--muted)' }}>{label}</div>
       <div className="text-[28px] font-light tracking-tight" style={{ color: accent || 'var(--ink)' }}>{value}</div>
-      {accent && <div className="mt-2.5 h-[2px] rounded-full" style={{ background: accent, opacity: 0.5 }} />}
+      {accent && <div className="mt-2.5 h-[2px] rounded-full" style={{ background: accent, opacity: 0.4 }} />}
     </div>
   );
 }

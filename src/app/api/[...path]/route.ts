@@ -708,6 +708,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // ── Visitor session (no registration required) ───
+  if (path === '/auth/visitor') {
+    const token = genSessionToken();
+    const tokHash = await sha256(token);
+    const expires = new Date(Date.now() + 2 * 3600 * 1000).toISOString(); // 2h visitor session
+
+    // Find or create a shared visitor user
+    let visitorUser = await db.prepare("SELECT id FROM users WHERE email = 'visitor@demo'").first() as any;
+    if (!visitorUser) {
+      visitorUser = { id: genId() };
+      await db.prepare('INSERT INTO users (id, email, name, password_hash, password_salt, role) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(visitorUser.id, 'visitor@demo', 'Visitor', 'noop', 'noop', 'visitor').run()
+        .catch(() => {});
+    }
+
+    await db.prepare('INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)')
+      .bind(genId(), visitorUser.id, tokHash, expires).run();
+
+    return NextResponse.json({ token, user: { id: visitorUser.id, email: 'visitor@demo', name: 'Visitor', role: 'visitor' } });
+  }
+
   // ── Change password (requires auth) ──────────────
   if (path === '/auth/change-password') {
     const authCheck = await authenticate(req, db);

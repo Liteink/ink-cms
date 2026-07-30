@@ -23,39 +23,69 @@ export default function AdminShell({ children, breadcrumb }: { children: React.R
   const [postCount, setPostCount] = useState<number | null>(null);
   const [authState, setAuthState] = useState<'checking' | 'ok' | 'redirect'>('checking');
 
+  // Check visitor mode
+  const [visitor, setVisitor] = useState(false);
+
   const isActive = (href: string) => href === '/admin' ? pathname === '/admin' : pathname.startsWith(href);
 
   useEffect(() => {
+    // Visitor session — real token from /api/auth/visitor
     const token = localStorage.getItem('ink-cms-token');
-    // No token or legacy 'changeme' → must login
+    const isVisiting = localStorage.getItem('ink-cms-visitor') === 'true';
+
+    if (isVisiting && token && token.startsWith('ink_sess_')) {
+      // Validate visitor session
+      fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(d => {
+          if (d?.user?.role === 'visitor') {
+            setVisitor(true);
+            setAuthState('ok');
+          } else {
+            // Not a visitor token — clear and redirect
+            localStorage.removeItem('ink-cms-visitor');
+            localStorage.removeItem('ink-cms-token');
+            setAuthState('redirect');
+            router.replace('/login');
+          }
+        })
+        .catch(() => { setVisitor(true); setAuthState('ok'); });
+      return;
+    }
+
+    // Normal auth
     if (!token || !token.startsWith('ink_sess_')) {
       setAuthState('redirect');
       router.replace('/login');
       return;
     }
-    // Validate session is still alive
     fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(d => {
         if (d?.user) {
+          if (d.user.role === 'visitor') { setVisitor(true); }
           setAuthState('ok');
-          // Fetch post count for badge
           fetch('/api/admin/posts', { headers: { Authorization: `Bearer ${token}` } })
             .then(r => r.ok ? r.json() : null)
             .then(dd => { if (dd?.posts) setPostCount(dd.posts.length); })
             .catch(() => {});
         } else {
-          // Session expired/invalid — clean up and redirect
           localStorage.removeItem('ink-cms-token');
           setAuthState('redirect');
           router.replace('/login');
         }
       })
-      .catch(() => setAuthState('ok')); // network error — let API calls handle 401
+      .catch(() => setAuthState('ok'));
   }, []);
 
+  const exitVisitor = () => {
+    localStorage.removeItem('ink-cms-visitor');
+    localStorage.removeItem('ink-cms-token');
+    router.push('/login');
+  };
+
   const isEditor = pathname.includes('/posts/new') || pathname.includes('/edit');
-  const showNewPost = !isEditor && !pathname.startsWith('/admin/settings') && !pathname.startsWith('/admin/media') && !pathname.startsWith('/admin/users') && !pathname.startsWith('/admin/profile');
+  const showNewPost = !visitor && !isEditor && !pathname.startsWith('/admin/settings') && !pathname.startsWith('/admin/media') && !pathname.startsWith('/admin/users') && !pathname.startsWith('/admin/profile');
 
   if (authState === 'checking' || authState === 'redirect') {
     return (
@@ -70,8 +100,9 @@ export default function AdminShell({ children, breadcrumb }: { children: React.R
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-[200px] shrink-0 flex-col border-r md:flex" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
         <Link href="/admin" className="flex items-center gap-2 border-b px-4 py-3.5" style={{ borderColor: 'var(--border)' }}>
-          <span className="flex h-6 w-6 items-center justify-center rounded-[5px]" style={{ background: 'var(--ink)', color: 'var(--bg)' }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z" /></svg>
+          <span className="flex h-6 w-6 items-center justify-center rounded-[6px]" style={{ background: 'linear-gradient(135deg, #FF7A30, #FF4D00)' }}>
+            <svg width="14" height="14" viewBox="0 0 120 120" fill="none">
+              <path fillRule="evenodd" clipRule="evenodd" d="M60 12 C60 12, 92 48, 92 70 C92 88, 78 100, 60 100 C42 100, 28 88, 28 70 C28 48, 60 12, 60 12 Z M58 30 L46 62 L56 62 L50 84 L66 50 L56 50 Z" fill="white"/></svg>
           </span>
           <span className="text-[14px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>Ink</span>
         </Link>
@@ -103,6 +134,15 @@ export default function AdminShell({ children, breadcrumb }: { children: React.R
 
       {/* Main */}
       <div className="flex flex-1 flex-col min-w-0">
+        {/* Visitor banner */}
+        {visitor && (
+          <div className="flex items-center justify-center gap-3 px-4 py-1.5 text-[12px] font-medium" style={{ background: 'linear-gradient(90deg, #FF7A30, #FF4D00)', color: 'white' }}>
+            <span>Demo mode — read-only preview</span>
+            <button onClick={exitVisitor} className="rounded-full bg-white/20 px-3 py-0.5 text-[11px] font-semibold transition-opacity hover:opacity-80">
+              Sign In →
+            </button>
+          </div>
+        )}
         <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b px-4 md:px-5" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
           <div className="flex items-center gap-2.5 min-w-0">
             <Link href="/admin" className="flex items-center gap-1.5 md:hidden">
@@ -115,11 +155,19 @@ export default function AdminShell({ children, breadcrumb }: { children: React.R
           <div className="flex items-center gap-3">
             {showNewPost && <div className="hidden md:block"><PostSearch /></div>}
             {showNewPost && (
-              <Link href="/admin/posts/new" className="btn-pill btn-solid shrink-0">
+              <Link href="/admin/posts/new" className="btn-pill btn-brand shrink-0">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
                 <span className="hidden sm:inline">New</span>
               </Link>
             )}
+            {/* Mobile theme toggle */}
+            <button onClick={toggle} className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[var(--surface-2)] md:hidden" style={{ color: 'var(--muted)' }}>
+              {theme === 'dark' ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+              )}
+            </button>
           </div>
         </header>
         <main className="flex-1 overflow-x-hidden p-4 pb-20 md:p-7 md:pb-12">
@@ -127,25 +175,17 @@ export default function AdminShell({ children, breadcrumb }: { children: React.R
         </main>
       </div>
 
-      {/* Mobile bottom nav */}
+      {/* Mobile bottom nav — 5 key items only */}
       <nav className="fixed bottom-0 left-0 right-0 z-20 flex items-center justify-around border-t md:hidden" style={{ borderColor: 'var(--border)', background: 'var(--surface)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        {navItems.map(item => {
+        {navItems.filter((_, i) => [0, 1, 2, 5, 6].includes(i)).map(item => {
           const active = isActive(item.href);
           return (
             <Link key={item.href} href={item.href} className="flex flex-col items-center gap-0.5 px-3 py-2 transition-colors" style={{ color: active ? 'var(--ink)' : 'var(--muted)' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? '2.5' : '2'} strokeLinecap="round"><path d={item.icon} /></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? '2.5' : '1.8'} strokeLinecap="round"><path d={item.icon} /></svg>
               <span className="text-[10px] font-medium">{item.label}</span>
             </Link>
           );
         })}
-        <button onClick={toggle} className="flex flex-col items-center gap-0.5 px-3 py-2" style={{ color: 'var(--muted)' }}>
-          {theme === 'dark' ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-          )}
-          <span className="text-[10px] font-medium">Theme</span>
-        </button>
       </nav>
     </div>
   );

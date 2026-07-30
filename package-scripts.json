@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
+    "build": "next build",
+    "build:worker": "npx opennextjs-cloudflare",
+    "preview": "wrangler dev",
+    "deploy": "npx opennextjs-cloudflare && wrangler deploy"
+  }
+}

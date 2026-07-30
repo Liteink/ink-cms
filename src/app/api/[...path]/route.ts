@@ -708,13 +708,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ── Visitor session (no registration required) ───
+  // ── Visitor session (rate-limited, lazy cleanup) ───
   if (path === '/auth/visitor') {
+    const ip = getClientIP(req);
+    const allowed = await checkRateLimit(ip, 'visitor', 10, 3600);
+    if (!allowed) return NextResponse.json({ error: 'Too many demo sessions. Try again later.' }, { status: 429 });
     const token = genSessionToken();
     const tokHash = await sha256(token);
-    const expires = new Date(Date.now() + 2 * 3600 * 1000).toISOString(); // 2h visitor session
+    const expires = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
 
-    // Find or create a shared visitor user
     let visitorUser = await db.prepare("SELECT id FROM users WHERE email = 'visitor@demo'").first() as any;
     if (!visitorUser) {
       visitorUser = { id: genId() };
@@ -723,23 +725,29 @@ export async function POST(req: NextRequest) {
         .catch(() => {});
     }
 
+    // Lazy cleanup: delete expired visitor sessions
+    try {
+      if (visitorUser?.id) {
+        await db.prepare("DELETE FROM sessions WHERE user_id = ? AND expires_at <= datetime('now')")
+          .bind(visitorUser.id).run();
+      }
+    } catch {}
+
     await db.prepare('INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)')
       .bind(genId(), visitorUser.id, tokHash, expires).run();
 
+    await logActivity(db, 'visitor-session', 'user', visitorUser.id, ip);
     return NextResponse.json({ token, user: { id: visitorUser.id, email: 'visitor@demo', name: 'Visitor', role: 'visitor' } });
   }
 
-  // ── Change password (requires auth) ──────────────
+  // ── Change password (requires auth, blocks visitors) ──────────────
   if (path === '/auth/change-password') {
-    const authCheck = await authenticate(req, db);
-    if (!authCheck.ok || !authCheck.scopes.includes('*') && !authCheck.scopes.includes('posts.read')) {
-      // Any logged-in user can change their own password
-    }
     const token = req.headers.get('authorization')?.slice(7) || '';
     if (!token.startsWith('ink_sess_')) return NextResponse.json({ error: 'Session required' }, { status: 403 });
     const tokHash = await sha256(token);
-    const session = await db.prepare('SELECT user_id FROM sessions WHERE token_hash = ?').bind(tokHash).first() as any;
-    if (!session) return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+    const session = await db.prepare("SELECT s.user_id, u.role FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token_hash = ? AND s.expires_at > datetime('now')").bind(tokHash).first() as any;
+    if (!session) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+    if (session.role === 'visitor') return NextResponse.json({ error: 'Visitors cannot change passwords' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
     const currentPassword = String(body.currentPassword || '');
@@ -761,13 +769,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ── Update profile (requires auth) ───────────────
+  // ── Update profile (requires auth, blocks visitors) ───────────────
   if (path === '/auth/profile') {
     const token = req.headers.get('authorization')?.slice(7) || '';
     if (!token.startsWith('ink_sess_')) return NextResponse.json({ error: 'Session required' }, { status: 403 });
     const tokHash = await sha256(token);
-    const session = await db.prepare('SELECT user_id FROM sessions WHERE token_hash = ?').bind(tokHash).first() as any;
-    if (!session) return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+    const session = await db.prepare("SELECT s.user_id, u.role FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token_hash = ? AND s.expires_at > datetime('now')").bind(tokHash).first() as any;
+    if (!session) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+    if (session.role === 'visitor') return NextResponse.json({ error: 'Visitors cannot edit profiles' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
     const name = String(body.name || '').trim();

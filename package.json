@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
+    "dompurify": "^3.4.12",
     "marked": "^18.0.7",
     "next": "^15.1.0",
     "react": "^19.0.0",

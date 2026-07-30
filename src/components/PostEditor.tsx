@@ -9,6 +9,18 @@ import {
   isFutureDate, timeAgo, type Post, type Revision,
 } from '@/lib/api';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+
+// Sanitize marked output — strip all event handlers, dangerous protocols
+function safeMarkdown(md: string): string {
+  try {
+    const raw = marked.parse(md || '') as string;
+    return DOMPurify.sanitize(raw, {
+      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+    });
+  } catch { return ''; }
+}
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -91,7 +103,7 @@ export default function PostEditor({ mode, postId }: { mode: 'create' | 'edit'; 
   }, [post.title, mode]);
 
   const previewHtml = useMemo(() => {
-    try { return marked.parse(post.body || '') as string; } catch { return post.body || ''; }
+    return safeMarkdown(post.body || '');
   }, [post.body]);
 
   const insertAtCursor = (text: string) => {
@@ -416,7 +428,7 @@ export default function PostEditor({ mode, postId }: { mode: 'create' | 'edit'; 
               </button>
             </div>
             <div className="overflow-y-auto p-5">
-              <div className="prose-ink" dangerouslySetInnerHTML={{ __html: marked.parse(selectedRev.body || '') as string }} />
+              <div className="prose-ink" dangerouslySetInnerHTML={{ __html: safeMarkdown(selectedRev.body || '') }} />
             </div>
             <div className="flex justify-end gap-2 border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>
               <button onClick={() => setSelectedRev(null)} className="btn-pill btn-ghost">Cancel</button>

@@ -61,14 +61,35 @@ function getClientIP(req: NextRequest): string {
 
 // ── SSRF protection ───────────────────────────────
 function isPrivateIP(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
-  if (h.startsWith('10.') || h.startsWith('192.168.')) return true;
-  if (h.startsWith('172.')) { const o2 = parseInt(h.split('.')[1]); if (o2 >= 16 && o2 <= 31) return true; }
-  if (h.startsWith('169.254.')) return true; // cloud metadata
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+
+  // Block localhost variants
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '::') return true;
+
+  // IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1)
+  const v4Mapped = h.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4Mapped) return isPrivateIP(v4Mapped[1]);
+
+  // Decimal IP (e.g. 2130706433 = 127.0.0.1)
+  if (/^\d{8,}$/.test(h)) {
+    const num = parseInt(h);
+    const o1 = (num >>> 24) & 0xff, o2 = (num >> 16) & 0xff;
+    const octets = `${o1}.${o2}.${(num >> 8) & 0xff}.${num & 0xff}`;
+    return isPrivateIP(octets);
+  }
+
+  // Octal/hex IPs (e.g. 0177.0.0.1 or 0x7f000001)
+  if (/^0[0-7]*\./.test(h) || /^0x[0-9a-f]+/i.test(h)) return true;
+
+  // Standard private ranges
+  if (h.startsWith('10.') || h.startsWith('192.168.') || h.startsWith('169.254.')) return true;
   if (h === '0.0.0.0' || h === 'metadata.google.internal') return true;
+  if (h.startsWith('172.')) { const o2 = parseInt(h.split('.')[1]); if (o2 >= 16 && o2 <= 31) return true; }
+  if (h.startsWith('fc') || h.startsWith('fd')) return true; // IPv6 ULA
+
   // Block .local, .internal, .localhost TLDs
   if (h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.localhost')) return true;
+
   return false;
 }
 
@@ -76,7 +97,8 @@ async function safeFetch(url: string, opts?: RequestInit): Promise<Response> {
   const parsed = new URL(url);
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http(s) URLs allowed');
   if (isPrivateIP(parsed.hostname)) throw new Error('Internal URLs not allowed');
-  return fetch(url, opts);
+  // Block redirects to private IPs — don't follow redirects automatically
+  return fetch(url, { ...opts, redirect: 'manual' });
 }
 
 // ── Permission scopes & roles ─────────────────────
@@ -127,8 +149,8 @@ function genSessionToken(): string {
 }
 
 function parseScopes(raw: string | null | undefined): string[] {
-  if (!raw) return ['*'];
-  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : ['*']; }
+  if (!raw) return ['posts.read'];
+  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : ['posts.read']; }
   catch { return ['*']; }
 }
 
@@ -316,12 +338,15 @@ async function persistPostUpdate(db: any, id: string, data: Record<string, any>)
   return post;
 }
 
-// Lazy-publish: any pending scheduled post whose time has come goes live
+// Lazy-publish: pending scheduled posts go live (atomic claim to prevent races)
 async function processScheduledPosts(db: any) {
   let due: any[] = [];
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const res = await db.prepare("SELECT post_id, publish_at FROM scheduled WHERE status = 'pending' AND publish_at <= ?").bind(today).all();
+    // Atomic claim: only this request gets pending rows (prevents duplicate webhooks)
+    const res = await db.prepare(
+      "UPDATE scheduled SET status = 'publishing' WHERE status = 'pending' AND publish_at <= ? RETURNING post_id"
+    ).bind(today).all();
     due = res.results || [];
   } catch { return; }
 
@@ -369,7 +394,7 @@ export async function GET(req: NextRequest) {
         title: p.title, slug: p.slug, description: p.description,
         excerpt: String(p.body || '').replace(/^---[\s\S]*?---/, '').replace(/```[\s\S]*?```/g, '').replace(/[#>*_~-]/g, '').replace(/\n+/g, ' ').trim().slice(0, 300),
         pubDate: p.pub_date, author: p.author, category: p.category,
-        tags: JSON.parse(p.tags || '[]'), series: p.series, seriesOrder: p.series_order,
+        tags: (() => { try { return JSON.parse(p.tags || '[]'); } catch { return []; } }), series: p.series, seriesOrder: p.series_order,
         featured: p.featured === 1, readingTime: p.reading_time,
       })),
     });
@@ -436,7 +461,10 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const q = url.searchParams.get('q');
     const type = url.searchParams.get('type'); // 'post' | 'page' | undefined (all)
-    let posts = await getAllPosts(db);
+    // Visitors only see published posts; admins/users see drafts too
+    const includeDrafts = auth.scopes.includes('*') || auth.scopes.includes('posts.write');
+    let posts = await getAllPosts(db, includeDrafts);
+    if (type) posts = posts.filter((p: any) => (p.type || 'post') === type);
     if (type) posts = posts.filter((p: any) => (p.type || 'post') === type);
     if (q) {
       const ql = q.toLowerCase();
@@ -589,7 +617,7 @@ export async function GET(req: NextRequest) {
     if (!prompt) return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
 
     try {
-      const aiRes = await fetch(`${baseUrl}/v1/chat/completions`, {
+      const aiRes = await safeFetch(`${baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aiKey}` },
         body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.7 }),
@@ -653,7 +681,8 @@ export async function POST(req: NextRequest) {
     const salt = genSalt();
     const passwordHash = await hashPassword(password, salt);
     const id = genId();
-    const userCount = (await db.prepare('SELECT COUNT(*) as c FROM users').first() as any)?.c || 0;
+    // First-user-is-admin: count only non-visitor users (prevent visitor poisoning)
+    const userCount = (await db.prepare("SELECT COUNT(*) as c FROM users WHERE role != 'visitor'").first() as any)?.c || 0;
     const role = userCount === 0 ? 'admin' : 'user';
 
     try {
@@ -909,13 +938,22 @@ export async function POST(req: NextRequest) {
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     const blob = file as Blob;
     const safeName = String((file as any).name || 'file').replace(/[^a-zA-Z0-9._-]/g, '-').slice(-80);
-    // Block dangerous file types
     const ext = safeName.split('.').pop()?.toLowerCase() || '';
+    // Block dangerous file types
     const blocked = ['html', 'htm', 'js', 'mjs', 'svg', 'xml', 'php', 'exe', 'bat', 'sh', 'py', 'rb', 'pl'];
     if (blocked.includes(ext)) return NextResponse.json({ error: `File type .${ext} not allowed` }, { status: 400 });
+    // Derive Content-Type from extension — NEVER trust client-supplied blob.type
+    const MIME_MAP: Record<string, string> = {
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+      webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon',
+      pdf: 'application/pdf', txt: 'text/plain', json: 'application/json',
+      mp4: 'video/mp4', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav',
+      zip: 'application/zip', gz: 'application/gzip',
+    };
+    const safeMime = MIME_MAP[ext] || 'application/octet-stream';
     const key = `media/${Date.now()}-${safeName}`;
     const buf = await blob.arrayBuffer();
-    await MEDIA.put(key, buf, { httpMetadata: { contentType: blob.type || 'application/octet-stream' } }).catch((e: any) => {
+    await MEDIA.put(key, buf, { httpMetadata: { contentType: safeMime } }).catch((e: any) => {
       throw new Error('R2 put failed: ' + (e?.message || e));
     });
     await logActivity(db, 'uploaded', 'media', key, safeName);
@@ -967,12 +1005,12 @@ export async function POST(req: NextRequest) {
     const rawKey = genApiKey();
     const keyHash = await sha256(rawKey);
     const id = genId();
-    // Parse requested permissions; default to full access for backward compat
-    let perms: string[] = ['*'];
+    // Parse requested permissions; default to read-only (least privilege)
+    let perms: string[] = ['posts.read'];
     if (Array.isArray(body.permissions) && body.permissions.length > 0) {
       // Validate each scope
       perms = body.permissions.filter((s: string) => s === '*' || ALL_SCOPES.includes(s as any));
-      if (perms.length === 0) perms = ['*'];
+      if (perms.length === 0) perms = ['posts.read'];
     }
     const permsJson = JSON.stringify(perms);
     await db.prepare('INSERT INTO api_keys (id, key_hash, label, permissions) VALUES (?, ?, ?, ?)').bind(id, keyHash, body.label || 'API Key', permsJson).run();
@@ -1067,6 +1105,15 @@ export async function DELETE(req: NextRequest) {
     await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userDel[1]).run().catch(() => {});
     await db.prepare('DELETE FROM users WHERE id = ?').bind(userDel[1]).run();
     await logActivity(db, 'deleted', 'user', userDel[1], '');
+    return NextResponse.json({ ok: true });
+  }
+
+  // Revoke API key (admin-only)
+  const keyDel = path.match(/^\/admin\/keys\/(.+)$/);
+  if (keyDel) {
+    if (!auth.scopes.includes('*')) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
+    await db.prepare('DELETE FROM api_keys WHERE id = ?').bind(keyDel[1]).run();
+    await logActivity(db, 'revoked', 'api_key', keyDel[1], '');
     return NextResponse.json({ ok: true });
   }
 
